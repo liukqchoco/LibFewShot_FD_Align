@@ -14,6 +14,6 @@ backbone:
 classifier:
   name: CLIP_context
   kwargs:
-    train_batch_size_per_gpu: 2
-    val_batch_size_per_gpu: 2
-    test_batch_size_per_gpu: 2
+    train_batch_size_per_gpu: 4
+    val_batch_size_per_gpu: 8
+    test_batch_size_per_gpu: 8

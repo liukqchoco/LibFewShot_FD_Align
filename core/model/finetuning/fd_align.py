@@ -22,10 +22,10 @@ class CLIP_context(FinetuningModel):
             train_shot: int = 5,
             val_shot: int = 5,
             test_shot: int = 5,
-            num_query: int = 10,
-            train_batch_size_per_gpu: int = 2,
-            val_batch_size_per_gpu: int = 2,
-            test_batch_size_per_gpu: int = 2,
+            num_query: int = 15,
+            train_batch_size_per_gpu: int = 4,
+            val_batch_size_per_gpu: int = 8,
+            test_batch_size_per_gpu: int = 8,
             lr: float = 0.1,
             weight_decay: float = 5e-4,
             decay_scheduler: Optional[str] = "cosine",
@@ -132,8 +132,13 @@ class CLIP_context(FinetuningModel):
         # 提取标签并调整形状
         label = label[0, :, 0]  # [way]
         num_query = logits.shape[1]  # 每类的查询样本数
-        label = label.repeat(test_batch_size_per_gpu).to(
-            logits.device)  # [test_batch_size_per_gpu * num_query * way]
+        # label = label.repeat(test_batch_size_per_gpu).to(
+        #     logits.device)
+        # label 调整后的形状：[test_batch_size_per_gpu * way]。和logits对不上
+        # 应该调整为 [test_batch_size_per_gpu * num_query * way]
+        label = label.repeat(test_batch_size_per_gpu * num_query).to(
+            logits.device)
+        # 或者可以试试我在set_forward_loss里的处理方式, 直接把label在repeat前截断一下
 
         # 调整 logits 的形状
         logits = logits.reshape(-1, logits.shape[-1])  # [test_batch_size_per_gpu * num_query * way, way]
@@ -164,6 +169,11 @@ class CLIP_context(FinetuningModel):
         logits, ctx_loss = self.set_forward_adaptation(batch, train_batch_size_per_gpu, way, shot)
 
         label = self.train_label
+        # print("label.shape", label.shape)
+        num_tmp = logits.shape[1]
+        tmp = label.shape[0] // num_tmp * num_tmp
+        if tmp == 0: tmp = num_tmp
+        label = label[:tmp] # TODO: 我直接把它截断了，可能有大问题
         label = torch.unsqueeze(label, 0).repeat(self.train_batch_size_per_gpu, 1).reshape(-1).to(logits.device)
         # print("label.shape", label.shape, "logits.shape", logits.shape)
         logits = logits.reshape(label.size(0), -1)
