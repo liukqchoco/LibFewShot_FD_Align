@@ -1,0 +1,4 @@
+backbone:
+  name: clip_vit32
+  kwargs:
+
