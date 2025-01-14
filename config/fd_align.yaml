@@ -1,0 +1,15 @@
+includes:
+  - headers/data.yaml
+  - headers/device.yaml
+  - headers/misc.yaml
+  - headers/model.yaml
+  - headers/optimizer.yaml
+  - backbones/clip_vit.yaml
+
+backbone:
+  name: clip_vit32
+  kwargs:
+
+classifier:
+  name: CLIP_context
+  kwargs:

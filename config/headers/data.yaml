@@ -1,5 +1,5 @@
 data_root: ../data/libfewshot/miniImageNet--ravi
-image_size: 84
+image_size: 224
 use_memory: False
 augment: True
 augment_times: 1

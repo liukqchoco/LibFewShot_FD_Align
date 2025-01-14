@@ -4,3 +4,4 @@ from .loss import *
 from .meta import *
 from .metric import *
 from .finetuning import *
+from .finetuning import fd_align
