@@ -4,6 +4,7 @@ includes:
   - headers/misc.yaml
   - headers/model.yaml
   - headers/optimizer.yaml
+  - classifiers/fd_align.yaml
   - backbones/clip_vit.yaml
 
 backbone:

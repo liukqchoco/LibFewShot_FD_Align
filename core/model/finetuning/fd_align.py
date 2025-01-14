@@ -10,7 +10,6 @@ from ..backbone.clip_vit import get_ILF_kmeans_weights_classifier, ImageEncoder,
 from core.utils import accuracy
 
 class CLIP_context(FinetuningModel):
-
     def __init__(
             self,
             metric: str = "cosine",
