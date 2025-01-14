@@ -22,4 +22,4 @@
 
 在 `config/backbones`增加 `clip_vit.yaml`, 用于调用clip_vit32
 
-在 `config`下增加了 `fd_align.yaml`，作为最终的配置文件（待修改）
+在 `config`下增加了 `fd_align.yaml`，作为最终的配置文件（已修改嘿嘿~）
