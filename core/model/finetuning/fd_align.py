@@ -7,7 +7,7 @@ from torch import Tensor
 import torch.nn.functional as F
 from typing import Tuple, List, Optional, Union, Dict
 from ..backbone.clip_vit import get_ILF_kmeans_weights_classifier, ImageEncoder, load
-
+from core.utils import accuracy
 
 class CLIP_context(FinetuningModel):
 
@@ -84,8 +84,16 @@ class CLIP_context(FinetuningModel):
         self.train_shot = train_shot
         self.val_shot = val_shot
         self.test_shot = test_shot
+
         self.num_query = num_query
+
         self.train_batch_size_per_gpu = train_batch_size_per_gpu
+        self.val_batch_size_per_gpu = val_batch_size_per_gpu
+        self.test_batch_size_per_gpu = test_batch_size_per_gpu
+
+        self.train_label = torch.arange(self.train_way, dtype=torch.int8).repeat(num_query).type(torch.LongTensor).reshape(-1)
+        self.val_label = torch.arange(self.val_way, dtype=torch.int8).repeat(num_query).type(torch.LongTensor).reshape(-1)
+        self.test_label = torch.arange(self.test_way, dtype=torch.int8).repeat(num_query).type(torch.LongTensor).reshape(-1)
 
         # FIXME: 1. 视觉编码器
         # self.classifier = clip_head()
@@ -106,8 +114,23 @@ class CLIP_context(FinetuningModel):
         del clip_model_
         self.loss_ctx = torch.nn.KLDivLoss()
 
-    def set_forward(self, batch, batch_size, way, shot):
-        # 使用PN_head
+
+    def set_forward(self, batch):
+        way = self.test_way
+        shot = self.test_shot
+        test_batch_size_per_gpu = self.test_batch_size_per_gpu
+
+        logits = self.inference_forward(batch, test_batch_size_per_gpu, way, shot)
+
+        label = self.test_label
+        label = torch.unsqueeze(label, 0).repeat(test_batch_size_per_gpu, 1).reshape(-1).to(logits.device)
+        logits = logits.reshape(label.size(0), -1)
+
+        acc = accuracy(logits, label)
+        return logits, acc
+
+    def inference_forward(self, batch, batch_size, way, shot):
+        # PN head
         num_support_samples = way * shot
         data, _ = batch
         data = self.backbone(data)  # FIXME: visual embedding
@@ -121,27 +144,20 @@ class CLIP_context(FinetuningModel):
         logits = self.classifier(data_query, data_support, way, shot)
         return logits
 
-    def set_forward_loss(self, batch, **kwargs):
+    def set_forward_loss(self, batch):
         way = self.train_way
         shot = self.train_shot
         train_batch_size_per_gpu = self.train_batch_size_per_gpu
         logits, ctx_loss = self.set_forward_adaptation(batch, train_batch_size_per_gpu, way, shot)
 
-        label = getattr(self, f"{mode}_label")
-        label = torch.unsqueeze(label, 0).repeat(batch_size_per_gpu, 1).reshape(-1).to(logits.device)
+        label = self.train_label
+        label = torch.unsqueeze(label, 0).repeat(self.train_batch_size_per_gpu, 1).reshape(-1).to(logits.device)
         logits = logits.reshape(label.size(0), -1)
 
         loss = F.cross_entropy(logits, label)
-        log_loss = getattr(self, f"{mode}_loss")(loss)
-        accuracy = getattr(self, f"{mode}_acc")(logits, label)
-        self.log(f"{mode}/loss", log_loss)
-        self.log(f"{mode}/acc", accuracy)
-        # self.log(f"{mode}/context_scale", (torch.exp(self.context_scale)-self.context_scale))
-        if mode == "train":
-            final_loss = loss + ctx_loss
-            self.log(f"{mode}/all_loss", final_loss)
-            return final_loss
-        return loss
+        acc = accuracy(logits, label)
+        final_loss = loss + ctx_loss
+        return logits, acc, final_loss
 
     def set_forward_adaptation(self, batch, batch_size, way, shot):
         num_support_samples = way * shot
@@ -170,106 +186,6 @@ class CLIP_context(FinetuningModel):
         logits = self.classifier(data_query, data_support, way, shot)
 
         return logits, ctx_loss
-
-
-
-    def forward(self, batch, batch_size, way, shot):
-        r"""Since PN is a meta-learning method,
-            the model forward process is the same for train, val and test.
-
-        Args:
-            batch: a batch from val_dataloader.
-            batch_size: number of tasks during one iteration.
-            way: The number of classes within one task.
-            shot: The number of samples within each few-shot support class.
-        """
-        num_support_samples = way * shot
-        data, _ = batch
-        data = self.backbone(data)  # FIXME: visual embedding
-
-        if len(data.shape) == 2:
-            data = data.reshape([batch_size, -1] + list(data.shape[-1:]))
-        else:
-            data = data.reshape([batch_size, -1] + list(data.shape[-3:]))
-        data_support = data[:, :num_support_samples]
-        data_query = data[:, num_support_samples:]
-        logits = self.classifier(data_query, data_support, way, shot)
-        return logits
-
-    def train_forward(self, batch, batch_size, way, shot):
-        # FIXME:真正训练的地方，由shared_step显示调用，即getattr
-        num_support_samples = way * shot
-        image, _ = batch
-        data = self.backbone(image)
-        with torch.no_grad():
-            zero_data = self.zero_shot_clip(image)  # FIXME: 这个应该是frozen的visual encoder，用来后期做KL散度的
-
-        # context KL loss
-        # use KL loss compute the context loss between the data and the zero shot data
-        data = F.normalize(data, dim=1)
-        zero_data = F.normalize(zero_data,
-                                dim=1)  # FIXME: 下面这个context_classifier才是真的classifier，原有的PN_head是个fake的，只是用来确保能成功训练
-        ctx_loss = self.loss_ctx(torch.log(F.softmax(self.context_classifier(data), dim=1)),
-                                 F.softmax(self.context_classifier(zero_data), dim=1))
-
-        ctx_loss = self.scale * ctx_loss
-
-        if len(data.shape) == 2:
-            data = data.reshape([batch_size, -1] + list(data.shape[-1:]))
-        else:
-            data = data.reshape([batch_size, -1] + list(data.shape[-3:]))
-        data_support = data[:, :num_support_samples]
-        data_query = data[:, num_support_samples:]
-        # classification logits
-        logits = self.classifier(data_query, data_support, way, shot)
-
-        return logits, ctx_loss
-
-    def val_test_forward(self, batch, batch_size, way, shot):
-        return self(batch, batch_size, way, shot)
-
-    def shared_step(self, batch, mode):
-        r"""The shared operation across
-            validation, testing and potentially training (meta-learning).
-
-        Args:
-            batch: a batch from val_dataloader.
-            mode: train, val or test
-        """  # FIXME: 训练范式
-        assert mode in ["train", "val", "test"]
-        if mode == "train":
-            flag = "train"
-        else:
-            flag = "val_test"
-        foward_function = getattr(self, f"{flag}_forward")
-        batch_size_per_gpu = getattr(self.hparams, f"{mode}_batch_size_per_gpu")
-        shot = getattr(self.hparams, f"{mode}_shot")
-
-        way = getattr(self.hparams, f"{mode}_way")
-        if mode == "train":
-            logits, ctx_loss = foward_function(batch, batch_size_per_gpu, way, shot)
-            self.log(f"{mode}/ctx_loss", ctx_loss)
-        else:
-            logits = foward_function(batch, batch_size_per_gpu, way, shot)
-        label = getattr(self, f"{mode}_label")
-        label = torch.unsqueeze(label, 0).repeat(batch_size_per_gpu, 1).reshape(-1).to(logits.device)
-        logits = logits.reshape(label.size(0), -1)
-
-        loss = F.cross_entropy(logits, label)
-        log_loss = getattr(self, f"{mode}_loss")(loss)
-        accuracy = getattr(self, f"{mode}_acc")(logits, label)
-        self.log(f"{mode}/loss", log_loss)
-        self.log(f"{mode}/acc", accuracy)
-        # self.log(f"{mode}/context_scale", (torch.exp(self.context_scale)-self.context_scale))
-        if mode == "train":
-            final_loss = loss + ctx_loss
-            self.log(f"{mode}/all_loss", final_loss)
-            return final_loss
-        return loss
-
-    def configure_optimizers(self):
-        return utils.set_schedule(self)
-
 
 def get_model():
     return CLIP_context

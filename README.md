@@ -13,3 +13,5 @@
 ## 增加分类器
 
 在`finetuning`中添加了`fd_align.py`文件，其中包含了训练，测试等一系列核心流程
+
+在`finetuning/fd_align_utils`中添加了`class_name.py`，`openai_imagenet_temple.py`，分别是对应数据集顺序的类名排序，template列表，用于生成spj的分类器
