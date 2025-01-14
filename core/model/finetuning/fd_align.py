@@ -120,13 +120,23 @@ class CLIP_context(FinetuningModel):
         way = self.test_way
         shot = self.test_shot
         test_batch_size_per_gpu = self.test_batch_size_per_gpu
-
+        # [batch_size, num_query, way]
         logits = self.inference_forward(batch, test_batch_size_per_gpu, way, shot)
+        _, label = batch
 
-        label = self.test_label
-        batch_size = test_batch_size_per_gpu
-        label = torch.unsqueeze(label, 0).repeat(test_batch_size_per_gpu, 1).reshape(-1).to(logits.device)
-        logits = logits.reshape(label.size(0), -1) #FIXME
+        # label = label[0,:,0]
+        # label = label.repeat(test_batch_size_per_gpu).to(logits.device)
+        #
+        # logits = logits.reshape(label.size(0), -1)
+
+        # 提取标签并调整形状
+        label = label[0, :, 0]  # [way]
+        num_query = logits.shape[1]  # 每类的查询样本数
+        label = label.repeat(test_batch_size_per_gpu).to(
+            logits.device)  # [test_batch_size_per_gpu * num_query * way]
+
+        # 调整 logits 的形状
+        logits = logits.reshape(-1, logits.shape[-1])  # [test_batch_size_per_gpu * num_query * way, way]
 
         acc = accuracy(logits, label)
         return logits, acc
