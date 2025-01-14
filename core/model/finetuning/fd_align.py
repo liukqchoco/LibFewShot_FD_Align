@@ -135,6 +135,7 @@ class CLIP_context(FinetuningModel):
         # PN head
         num_support_samples = way * shot
         data, _ = batch
+        data = data.to(self.device)
         data = self.backbone(data)  # FIXME: visual embedding
 
         if len(data.shape) == 2:
