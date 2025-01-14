@@ -76,6 +76,8 @@ class CLIP_context(FinetuningModel):
         """
         super(CLIP_context, self).__init__(**kwargs)
 
+        self.backbone = ImageEncoder("ViT_B_32")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # FIXME:需要在这里记录属性
         self.train_way = train_way
         self.val_way = val_way
@@ -161,6 +163,7 @@ class CLIP_context(FinetuningModel):
     def set_forward_adaptation(self, batch, batch_size, way, shot):
         num_support_samples = way * shot
         image, _ = batch
+        image = image.to(self.device)
         data = self.backbone(image)
         with torch.no_grad():
             zero_data = self.zero_shot_clip(image)

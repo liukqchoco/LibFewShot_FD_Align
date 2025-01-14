@@ -15,6 +15,7 @@ def main(rank, config):
 
 
 if __name__ == "__main__":
+    # config = Config("./reproduce/Baseline/Baseline-miniImageNet--ravi-Conv64F-5-Reproduce.yaml").get_config_dict()
     # config = Config("./config/test_install.yaml").get_config_dict()
     config = Config("./config/fd_align.yaml").get_config_dict()
 
