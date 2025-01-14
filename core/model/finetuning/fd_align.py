@@ -22,7 +22,7 @@ class CLIP_context(FinetuningModel):
             train_shot: int = 5,
             val_shot: int = 5,
             test_shot: int = 5,
-            num_query: int = 15,
+            num_query: int = 10,
             train_batch_size_per_gpu: int = 2,
             val_batch_size_per_gpu: int = 2,
             test_batch_size_per_gpu: int = 2,
@@ -124,8 +124,9 @@ class CLIP_context(FinetuningModel):
         logits = self.inference_forward(batch, test_batch_size_per_gpu, way, shot)
 
         label = self.test_label
+        batch_size = test_batch_size_per_gpu
         label = torch.unsqueeze(label, 0).repeat(test_batch_size_per_gpu, 1).reshape(-1).to(logits.device)
-        logits = logits.reshape(label.size(0), -1)
+        logits = logits.reshape(label.size(0), -1) #FIXME
 
         acc = accuracy(logits, label)
         return logits, acc
@@ -154,6 +155,7 @@ class CLIP_context(FinetuningModel):
 
         label = self.train_label
         label = torch.unsqueeze(label, 0).repeat(self.train_batch_size_per_gpu, 1).reshape(-1).to(logits.device)
+        # print("label.shape", label.shape, "logits.shape", logits.shape)
         logits = logits.reshape(label.size(0), -1)
 
         loss = F.cross_entropy(logits, label)
