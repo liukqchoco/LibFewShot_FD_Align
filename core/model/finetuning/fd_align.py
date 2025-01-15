@@ -15,7 +15,7 @@ class CLIP_context(FinetuningModel):
             metric: str = "cosine",
             scale_cls: float = 10.,
             normalize: bool = True,
-            backbone_name: str = "resnet12",
+            backbone_name: str = "ViT_B_32",
             train_way: int = 5,
             val_way: int = 5,
             test_way: int = 5,
@@ -26,14 +26,6 @@ class CLIP_context(FinetuningModel):
             train_batch_size_per_gpu: int = 4,
             val_batch_size_per_gpu: int = 8,
             test_batch_size_per_gpu: int = 8,
-            lr: float = 0.1,
-            weight_decay: float = 5e-4,
-            decay_scheduler: Optional[str] = "cosine",
-            optim_type: str = "sgd",
-            decay_epochs: Union[List, Tuple, None] = None,
-            decay_power: Optional[float] = None,
-            local_rank: int = -1,
-            backbone_kwargs: Dict = {},
             cscale: float = 1.0,
             cnumber: int = 1,
             **kwargs
@@ -62,17 +54,6 @@ class CLIP_context(FinetuningModel):
             train_batch_size_per_gpu: The batch size of training per GPU.
             val_batch_size_per_gpu: The batch size of validation per GPU.
             test_batch_size_per_gpu: The batch size of testing per GPU.
-            lr: The initial learning rate.
-            weight_decay: The weight decay parameter.
-            decay_scheduler: The scheduler of optimizer.
-                            "cosine" or "specified_epochs".
-            optim_type: The optimizer type.
-                        "sgd" or "adam"
-            decay_epochs: The list of decay epochs of decay_scheduler "specified_epochs".
-            decay_power: The decay power of decay_scheduler "specified_epochs"
-                        at eachspeicified epoch.
-                        i.e., adjusted_lr = lr * decay_power
-            backbone_kwargs: The parameters for creating backbone network.
         """
         super(CLIP_context, self).__init__(**kwargs)
 
@@ -91,10 +72,6 @@ class CLIP_context(FinetuningModel):
         self.train_batch_size_per_gpu = train_batch_size_per_gpu
         self.val_batch_size_per_gpu = val_batch_size_per_gpu
         self.test_batch_size_per_gpu = test_batch_size_per_gpu
-
-        self.train_label = torch.arange(self.train_way, dtype=torch.int8).repeat(num_query).type(torch.LongTensor).reshape(-1)
-        self.val_label = torch.arange(self.val_way, dtype=torch.int8).repeat(num_query).type(torch.LongTensor).reshape(-1)
-        self.test_label = torch.arange(self.test_way, dtype=torch.int8).repeat(num_query).type(torch.LongTensor).reshape(-1)
 
         # FIXME: 1. 视觉编码器
         # self.classifier = clip_head()
@@ -122,20 +99,18 @@ class CLIP_context(FinetuningModel):
         test_batch_size_per_gpu = self.test_batch_size_per_gpu
         # [batch_size, num_query, way]
         logits = self.inference_forward(batch, test_batch_size_per_gpu, way, shot)
-        _, label = batch
 
-        label = label[0, :, 0]  # [way]
-        num_query = logits.shape[1]  # 每类的查询样本数
-        label = label.repeat(test_batch_size_per_gpu).to(
-            logits.device)
+        num_query = logits.shape[1]
+        repeat_num = int(num_query * test_batch_size_per_gpu // self.test_way)
+        label = torch.arange(self.test_way, dtype=torch.int8).repeat(repeat_num).type(
+            torch.LongTensor).to(logits.device)
 
-        logits = logits.reshape(-1, logits.shape[-1])  # [test_batch_size_per_gpu * num_query * way, way]
+        logits = logits.reshape(-1, logits.shape[-1])
 
         acc = accuracy(logits, label)
         return logits, acc
 
     def inference_forward(self, batch, batch_size, way, shot):
-        # PN head
         num_support_samples = way * shot
         data, _ = batch
         data = data.to(self.device)
@@ -164,7 +139,7 @@ class CLIP_context(FinetuningModel):
         logits, ctx_loss = self.set_forward_adaptation(batch, train_batch_size_per_gpu, way, shot, data=data, data_query=query_features, data_support=support_features)
 
         # logits = logits.reshape(label.size(0), -1)
-        logits = logits.reshape(-1, logits.shape[-1])  # [test_batch_size_per_gpu * num_query * way, way]
+        logits = logits.reshape(-1, logits.shape[-1])
 
         label = query_target.reshape(-1)
         loss = F.cross_entropy(logits, label)
@@ -189,58 +164,48 @@ class CLIP_context(FinetuningModel):
 
         ctx_loss = self.scale * ctx_loss
 
-        # if len(data.shape) == 2:
-        #     data = data.reshape([batch_size, -1] + list(data.shape[-1:]))
-        # else:
-        #     data = data.reshape([batch_size, -1] + list(data.shape[-3:]))
-        # data_support = data[:, :num_support_samples]
-        # data_query = data[:, num_support_samples:]
-        # # classification logits
         logits = self.classifier(data_query, data_support, way, shot)
 
         return logits, ctx_loss
 
     def _generate_local_targets(self, episode_size):
         local_targets = (
-            torch.arange(self.way_num, dtype=torch.long)
+            torch.arange(self.train_way, dtype=torch.long)
             .view(1, -1, 1)
-            .repeat(episode_size, 1, self.shot_num + self.query_num)
+            .repeat(episode_size, 1, self.train_shot + self.query_num)
             .view(-1)
         )
         return local_targets
 
     def split_by_batch(self, features):
-        self.way_num = self.train_way
-        self.shot_num = self.train_shot
-        self.query_num = self.query_num
         episode_size = features.size(0) // (
-            self.way_num * (self.shot_num + self.query_num)
+            self.train_way * (self.train_shot + self.query_num)
         )
         local_labels = (
             self._generate_local_targets(episode_size)
             .to(self.device)
             .contiguous()
-            .view(episode_size, self.way_num, self.shot_num + self.query_num)
+            .view(episode_size, self.train_way, self.train_shot + self.query_num)
         )
 
         features = features.contiguous().view(
-            episode_size, self.way_num, self.shot_num + self.query_num, -1
+            episode_size, self.train_way, self.train_shot + self.query_num, -1
         )
         support_features = (
-            features[:, :, : self.shot_num, :]
+            features[:, :, : self.train_shot, :]
             .contiguous()
-            .view(episode_size, self.way_num * self.shot_num, -1)
+            .view(episode_size, self.train_way * self.train_shot, -1)
         )
         query_features = (
-            features[:, :, self.shot_num :, :]
+            features[:, :, self.train_shot :, :]
             .contiguous()
-            .view(episode_size, self.way_num * self.query_num, -1)
+            .view(episode_size, self.train_way * self.query_num, -1)
         )
-        support_target = local_labels[:, :, : self.shot_num].reshape(
-            episode_size, self.way_num * self.shot_num
+        support_target = local_labels[:, :, : self.train_shot].reshape(
+            episode_size, self.train_way * self.train_shot
         )
-        query_target = local_labels[:, :, self.shot_num :].reshape(
-            episode_size, self.way_num * self.query_num
+        query_target = local_labels[:, :, self.train_shot :].reshape(
+            episode_size, self.train_way * self.query_num
         )
 
         return support_features, query_features, support_target, query_target
