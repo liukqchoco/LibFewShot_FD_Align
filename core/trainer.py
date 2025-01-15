@@ -188,7 +188,8 @@ class Trainer(object):
             meter.update("batch_time", time() - end)
 
             #打印每次当前是第几个
-            print(batch_idx, "/", max(map(len, self.train_loader)) * log_scale)
+            # print(batch_idx, "/", max(map(len, self.train_loader)) * log_scale)
+            print("{}/{}".format(batch_idx+1, max(map(len, self.train_loader)) * log_scale))
             # print the intermediate results
             if ((batch_idx + 1) * log_scale % self.config["log_interval"] == 0) or (
                 batch_idx + 1

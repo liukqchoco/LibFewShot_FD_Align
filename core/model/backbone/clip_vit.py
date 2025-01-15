@@ -448,7 +448,7 @@ class ClassificationHead(torch.nn.Linear):
 
 
 def create_model():
-    return ImageEncoder("ViT_B_32")
+    return ImageEncoder("ViT_B_32")  # FIXME
 
 
 def get_CLIP_contrastive_logits(image_feature, text_embedding):

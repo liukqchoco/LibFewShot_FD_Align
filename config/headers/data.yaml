@@ -1,5 +1,5 @@
-# data_root: ../data/libfewshot/miniImageNet--ravi
-data_root: ../data/libfewshot/WebCaricature
+data_root: ../data/libfewshot/miniImageNet--ravi
+# data_root: ../data/libfewshot/WebCaricature
 image_size: 224
 use_memory: False
 augment: True

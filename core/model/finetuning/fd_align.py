@@ -132,12 +132,12 @@ class CLIP_context(FinetuningModel):
         # 提取标签并调整形状
         label = label[0, :, 0]  # [way]
         num_query = logits.shape[1]  # 每类的查询样本数
-        # label = label.repeat(test_batch_size_per_gpu).to(
-        #     logits.device)
-        # label 调整后的形状：[test_batch_size_per_gpu * way]。和logits对不上
-        # 应该调整为 [test_batch_size_per_gpu * num_query * way]
-        label = label.repeat(test_batch_size_per_gpu * num_query).to(
+        label = label.repeat(test_batch_size_per_gpu).to(
             logits.device)
+        # label 调整后的形状：[test_batch_size_per_gpu * way]。好像和logits对不上
+        # 应该调整为 [test_batch_size_per_gpu * num_query * way]
+        # label = label.repeat(test_batch_size_per_gpu * num_query).to(
+        #     logits.device)
         # 或者可以试试我在set_forward_loss里的处理方式, 直接把label在repeat前截断一下
 
         # 调整 logits 的形状
