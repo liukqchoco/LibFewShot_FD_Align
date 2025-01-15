@@ -124,18 +124,11 @@ class CLIP_context(FinetuningModel):
         logits = self.inference_forward(batch, test_batch_size_per_gpu, way, shot)
         _, label = batch
 
-        # label = label[0,:,0]
-        # label = label.repeat(test_batch_size_per_gpu).to(logits.device)
-        #
-        # logits = logits.reshape(label.size(0), -1)
-
-        # 提取标签并调整形状
         label = label[0, :, 0]  # [way]
         num_query = logits.shape[1]  # 每类的查询样本数
         label = label.repeat(test_batch_size_per_gpu).to(
             logits.device)
 
-        # 调整 logits 的形状
         logits = logits.reshape(-1, logits.shape[-1])  # [test_batch_size_per_gpu * num_query * way, way]
 
         acc = accuracy(logits, label)
@@ -161,28 +154,28 @@ class CLIP_context(FinetuningModel):
         way = self.train_way
         shot = self.train_shot
         train_batch_size_per_gpu = self.train_batch_size_per_gpu
-        logits, ctx_loss = self.set_forward_adaptation(batch, train_batch_size_per_gpu, way, shot)
 
-        label = self.train_label
-        # print("label.shape", label.shape)
-        num_tmp = logits.shape[1]
-        tmp = label.shape[0] // num_tmp * num_tmp
-        if tmp == 0: tmp = num_tmp
-        label = label[:tmp] # TODO: 我直接把它截断了，可能有大问题
-        label = torch.unsqueeze(label, 0).repeat(self.train_batch_size_per_gpu, 1).reshape(-1).to(logits.device)
-        # print("label.shape", label.shape, "logits.shape", logits.shape)
-        logits = logits.reshape(label.size(0), -1)
+        data, _ = batch
+        data = data.to(self.device)
+        data = self.backbone(data)
 
+        support_features, query_features, support_target, query_target = self.split_by_batch(data)
+
+        logits, ctx_loss = self.set_forward_adaptation(batch, train_batch_size_per_gpu, way, shot, data=data, data_query=query_features, data_support=support_features)
+
+        # logits = logits.reshape(label.size(0), -1)
+        logits = logits.reshape(-1, logits.shape[-1])  # [test_batch_size_per_gpu * num_query * way, way]
+
+        label = query_target.reshape(-1)
         loss = F.cross_entropy(logits, label)
         acc = accuracy(logits, label)
         final_loss = loss + ctx_loss
         return logits, acc, final_loss
 
-    def set_forward_adaptation(self, batch, batch_size, way, shot):
+    def set_forward_adaptation(self, batch, batch_size, way, shot, data, data_query, data_support):
         num_support_samples = way * shot
         image, _ = batch
         image = image.to(self.device)
-        data = self.backbone(image)
         with torch.no_grad():
             zero_data = self.zero_shot_clip(image)
 
@@ -196,16 +189,61 @@ class CLIP_context(FinetuningModel):
 
         ctx_loss = self.scale * ctx_loss
 
-        if len(data.shape) == 2:
-            data = data.reshape([batch_size, -1] + list(data.shape[-1:]))
-        else:
-            data = data.reshape([batch_size, -1] + list(data.shape[-3:]))
-        data_support = data[:, :num_support_samples]
-        data_query = data[:, num_support_samples:]
-        # classification logits
+        # if len(data.shape) == 2:
+        #     data = data.reshape([batch_size, -1] + list(data.shape[-1:]))
+        # else:
+        #     data = data.reshape([batch_size, -1] + list(data.shape[-3:]))
+        # data_support = data[:, :num_support_samples]
+        # data_query = data[:, num_support_samples:]
+        # # classification logits
         logits = self.classifier(data_query, data_support, way, shot)
 
         return logits, ctx_loss
+
+    def _generate_local_targets(self, episode_size):
+        local_targets = (
+            torch.arange(self.way_num, dtype=torch.long)
+            .view(1, -1, 1)
+            .repeat(episode_size, 1, self.shot_num + self.query_num)
+            .view(-1)
+        )
+        return local_targets
+
+    def split_by_batch(self, features):
+        self.way_num = self.train_way
+        self.shot_num = self.train_shot
+        self.query_num = self.query_num
+        episode_size = features.size(0) // (
+            self.way_num * (self.shot_num + self.query_num)
+        )
+        local_labels = (
+            self._generate_local_targets(episode_size)
+            .to(self.device)
+            .contiguous()
+            .view(episode_size, self.way_num, self.shot_num + self.query_num)
+        )
+
+        features = features.contiguous().view(
+            episode_size, self.way_num, self.shot_num + self.query_num, -1
+        )
+        support_features = (
+            features[:, :, : self.shot_num, :]
+            .contiguous()
+            .view(episode_size, self.way_num * self.shot_num, -1)
+        )
+        query_features = (
+            features[:, :, self.shot_num :, :]
+            .contiguous()
+            .view(episode_size, self.way_num * self.query_num, -1)
+        )
+        support_target = local_labels[:, :, : self.shot_num].reshape(
+            episode_size, self.way_num * self.shot_num
+        )
+        query_target = local_labels[:, :, self.shot_num :].reshape(
+            episode_size, self.way_num * self.query_num
+        )
+
+        return support_features, query_features, support_target, query_target
 
 def get_model():
     return CLIP_context
